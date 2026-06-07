@@ -114,8 +114,8 @@ Response:
 ## 개발 명령어
 
 ```bash
-# 빌드
-sam build
+# 빌드 (Lambda 런타임이 python3.12이므로 uv로 설치한 3.12 경로를 PATH에 추가)
+PATH="/Users/ricepotato/.local/share/uv/python/cpython-3.12.10-macos-aarch64-none/bin:$PATH" sam build
 
 # 로컬 API 실행
 sam local start-api
