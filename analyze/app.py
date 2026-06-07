@@ -7,7 +7,7 @@ import boto3
 s3 = boto3.client("s3")
 bedrock = boto3.client("bedrock-runtime")
 BUCKET = os.environ["RECEIPT_BUCKET"]
-MODEL_ID = "apac.amazon.nova-lite-v1:0"
+MODEL_ID = "global.amazon.nova-2-lite-v1:0"
 
 EXT_TO_FORMAT = {
     "jpg": "jpeg",
