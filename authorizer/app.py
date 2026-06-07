@@ -20,10 +20,11 @@ def check_rate_limit(key: str, max_requests: int) -> bool:
         # 현재 윈도우 내에서 카운트 증가 (윈도우 만료 또는 아이템 없으면 예외 발생)
         response = table.update_item(
             Key={"user_id": key},
-            UpdateExpression="SET request_count = request_count + :one, ttl = :ttl",
+            UpdateExpression="SET request_count = request_count + :one, #ttl = :ttl",
             ConditionExpression=(
                 "attribute_exists(user_id) AND window_start > :window_start"
             ),
+            ExpressionAttributeNames={"#ttl": "ttl"},
             ExpressionAttributeValues={
                 ":one": 1,
                 ":ttl": now + WINDOW_SECONDS * 2,

@@ -4,7 +4,9 @@ import uuid
 
 import boto3
 
-s3 = boto3.client("s3")
+_region = os.environ.get("AWS_REGION", "ap-northeast-2")
+s3 = boto3.client("s3", region_name=_region,
+                  endpoint_url=f"https://s3.{_region}.amazonaws.com")
 BUCKET = os.environ["RECEIPT_BUCKET"]
 EXPIRES_IN = 300  # 5분
 

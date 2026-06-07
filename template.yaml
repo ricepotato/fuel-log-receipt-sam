@@ -64,11 +64,11 @@ Resources:
         Authorizers:
           LambdaAuthorizer:
             FunctionArn: !GetAtt AuthorizerFunction.Arn
+            FunctionPayloadType: REQUEST
             Identity:
               Headers:
                 - x-user-id
-            AuthorizerPayloadFormatVersion: "1.0"
-            EnableSimpleResponses: false
+              ReauthorizeEvery: 0
 
   # ── Lambda Functions ──────────────────────────────────────────────────────
 
