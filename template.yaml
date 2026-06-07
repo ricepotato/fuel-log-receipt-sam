@@ -3,39 +3,144 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   fuel-log-receipt-sam
 
-  Sample SAM Template for fuel-log-receipt-sam
+  Receipt image analysis service using AWS Bedrock
 
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 3
+    Timeout: 30
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        RATE_LIMIT_TABLE: !Ref RateLimitTable
 
 Resources:
-  HelloWorldFunction:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+
+  # ── DynamoDB ──────────────────────────────────────────────────────────────
+
+  RateLimitTable:
+    Type: AWS::DynamoDB::Table
     Properties:
-      CodeUri: hello_world/
+      TableName: !Sub "${AWS::StackName}-rate-limit"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ── Lambda Authorizer ─────────────────────────────────────────────────────
+
+  AuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: authorizer/
       Handler: app.lambda_handler
-      Runtime: python3.14
-      Architectures:
-        - x86_64
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RateLimitTable
+
+  AuthorizerFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt AuthorizerFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ReceiptApi}/*"
+
+  # ── API Gateway ───────────────────────────────────────────────────────────
+
+  ReceiptApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Auth:
+        DefaultAuthorizer: LambdaAuthorizer
+        Authorizers:
+          LambdaAuthorizer:
+            FunctionArn: !GetAtt AuthorizerFunction.Arn
+            Identity:
+              Headers:
+                - x-user-id
+            AuthorizerPayloadFormatVersion: "1.0"
+            EnableSimpleResponses: false
+
+  # ── Lambda Functions ──────────────────────────────────────────────────────
+
+  UploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: upload_url/
+      Handler: app.lambda_handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref ReceiptBucket
+      Environment:
+        Variables:
+          RECEIPT_BUCKET: !Ref ReceiptBucket
       Events:
-        HelloWorld:
-          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+        UploadUrl:
+          Type: Api
           Properties:
-            Path: /hello
-            Method: get
+            RestApiId: !Ref ReceiptApi
+            Path: /receipt/upload-url
+            Method: post
+
+  AnalyzeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: analyze/
+      Handler: app.lambda_handler
+      Timeout: 60
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ReceiptBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+      Environment:
+        Variables:
+          RECEIPT_BUCKET: !Ref ReceiptBucket
+      Events:
+        Analyze:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ReceiptApi
+            Path: /receipt/analyze
+            Method: post
+
+  # ── S3 Bucket ─────────────────────────────────────────────────────────────
+
+  ReceiptBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-receipts"
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldReceipts
+            Status: Enabled
+            ExpirationInDays: 7
 
 Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
-  HelloWorldApi:
-    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/Prod/hello/"
-  HelloWorldFunction:
-    Description: "Hello World Lambda Function ARN"
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
-    Description: "Implicit IAM Role created for Hello World function"
-    Value: !GetAtt HelloWorldFunctionRole.Arn
+  ReceiptApiUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ReceiptApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/Prod"
+  UploadUrlFunction:
+    Description: "Presigned URL Lambda Function ARN"
+    Value: !GetAtt UploadUrlFunction.Arn
+  AnalyzeFunction:
+    Description: "Receipt Analyze Lambda Function ARN"
+    Value: !GetAtt AnalyzeFunction.Arn
+  RateLimitTable:
+    Description: "DynamoDB Rate Limit Table Name"
+    Value: !Ref RateLimitTable
+  ReceiptBucket:
+    Description: "S3 Bucket for receipt images"
+    Value: !Ref ReceiptBucket

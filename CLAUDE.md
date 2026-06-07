@@ -47,15 +47,23 @@ fuel-log-receipt-sam/
 
 - 사용자는 모든 요청 헤더에 `x-user-id`(고유 식별값)를 포함하여 전송
 - API Gateway가 메인 Lambda를 실행하기 전에 **Lambda Authorizer**를 먼저 호출
-- Lambda Authorizer가 DynamoDB에서 해당 사용자의 최근 호출 횟수를 확인 후 카운트 +1
-  - 제한 이내: `Allow` 정책 반환 → 메인 Lambda 실행
-  - 제한 초과: `Deny` 정책 반환 → API Gateway가 `429 Too Many Requests` 응답
+- Lambda Authorizer는 **IP 제한 → 사용자 제한** 순서로 두 가지 조건을 모두 확인
+  - IP 제한 초과 또는 사용자 제한 초과 시: `Deny` 정책 반환 → API Gateway가 `429 Too Many Requests` 응답
+  - 모두 통과 시: `Allow` 정책 반환 → 메인 Lambda 실행
 - 메인 Lambda는 인증 통과 후에만 실행되므로 비용 절감 효과
 
+**호출 제한 기준 (1분 윈도우):**
+
+| 기준 | 최대 요청 수 |
+|---|---|
+| IP 단위 | 5회/분 |
+| 사용자(`x-user-id`) 단위 | 10회/분 |
+
 **DynamoDB 테이블 설계:**
-- Partition Key: `user_id` (사용자 고유 식별값)
-- 속성: `request_count` (호출 횟수), `window_start` (시간 윈도우 시작 시각)
-- TTL: 윈도우 만료 시 자동 삭제 (예: 1분 윈도우)
+- Partition Key: `user_id` (문자열) — IP는 `ip#<ip>`, 사용자는 `user#<user_id>` 형태로 구분
+- 속성: `request_count` (호출 횟수), `window_start` (윈도우 시작 시각), `ttl` (자동 삭제용 TTL)
+- 윈도우 만료 시 `ConditionalCheckFailedException`으로 감지 후 카운트 리셋
+- TTL로 만료된 아이템 자동 삭제
 
 ---
 
@@ -74,8 +82,9 @@ Response:
 ```
 클라이언트 (x-user-id 헤더 포함)
   → API Gateway
-  → Lambda Authorizer (DynamoDB 호출 횟수 확인 + 카운트 +1)
-      ├── 제한 초과 → 429 Too Many Requests
+  → Lambda Authorizer
+      ├── IP 제한 확인 (5회/분) → 초과 시 429
+      ├── 사용자 제한 확인 (10회/분) → 초과 시 429
       └── 허용 → 메인 Lambda (Presigned URL 생성 후 반환)
                   → S3 (클라이언트가 직접 이미지 업로드)
 ```
@@ -96,8 +105,9 @@ Response:
 ```
 클라이언트 (x-user-id 헤더 포함)
   → API Gateway
-  → Lambda Authorizer (DynamoDB 호출 횟수 확인 + 카운트 +1)
-      ├── 제한 초과 → 429 Too Many Requests
+  → Lambda Authorizer
+      ├── IP 제한 확인 (5회/분) → 초과 시 429
+      ├── 사용자 제한 확인 (10회/분) → 초과 시 429
       └── 허용 → 메인 Lambda (S3 이미지 읽기 → Bedrock 분석 → JSON 반환)
 ```
 

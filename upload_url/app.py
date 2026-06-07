@@ -1,0 +1,43 @@
+import json
+import os
+import uuid
+
+import boto3
+
+s3 = boto3.client("s3")
+BUCKET = os.environ["RECEIPT_BUCKET"]
+EXPIRES_IN = 300  # 5분
+
+ALLOWED_CONTENT_TYPES = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/heic": "heic",
+}
+DEFAULT_CONTENT_TYPE = "image/jpeg"
+
+
+def lambda_handler(event, context):
+    body = json.loads(event.get("body") or "{}")
+    content_type = body.get("content_type", DEFAULT_CONTENT_TYPE)
+
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({
+                "error": "Unsupported content_type",
+                "allowed": list(ALLOWED_CONTENT_TYPES.keys()),
+            }),
+        }
+
+    ext = ALLOWED_CONTENT_TYPES[content_type]
+    key = f"receipts/{uuid.uuid4()}.{ext}"
+    upload_url = s3.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": BUCKET, "Key": key, "ContentType": content_type},
+        ExpiresIn=EXPIRES_IN,
+    )
+    return {
+        "statusCode": 200,
+        "body": json.dumps({"upload_url": upload_url, "key": key, "content_type": content_type}),
+    }
