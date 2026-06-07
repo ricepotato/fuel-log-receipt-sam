@@ -1,0 +1,297 @@
+openapi: 3.0.3
+info:
+  title: Fuel Log Receipt API
+  description: |
+    영수증 이미지를 분석하여 구조화된 JSON 데이터를 반환하는 AWS Serverless 백엔드 API.
+
+    ## 인증 및 호출 제한
+
+    모든 API는 `x-user-id` 헤더를 통해 사용자를 식별하며, Lambda Authorizer가 각 요청에 대해
+    IP 기반 및 사용자 기반 호출 횟수를 **1분 슬라이딩 윈도우** 기준으로 제한한다.
+
+    | 기준 | 최대 요청 수 |
+    |---|---|
+    | IP 단위 | 5회 / 분 |
+    | 사용자(`x-user-id`) 단위 | 10회 / 분 |
+
+    한도 초과 시 `429 Too Many Requests`가 반환된다.
+
+    ## 이미지 업로드 흐름
+
+    1. `POST /receipt/upload-url` 호출 → `upload_url`, `key` 수신
+    2. 수신한 `upload_url`(S3 Presigned URL)로 이미지를 직접 PUT 업로드
+    3. `POST /receipt/analyze` 호출 시 수신한 `key` 전달 → 영수증 분석 결과 수신
+  version: 1.0.0
+  contact:
+    email: ricepotato40@gmail.com
+
+servers:
+  - url: https://{apiId}.execute-api.{region}.amazonaws.com/Prod
+    description: AWS API Gateway (Production)
+    variables:
+      apiId:
+        description: API Gateway REST API ID
+        default: YOUR_API_ID
+      region:
+        description: AWS Region
+        default: ap-northeast-2
+
+tags:
+  - name: receipt
+    description: 영수증 업로드 및 분석
+
+paths:
+  /receipt/upload-url:
+    post:
+      tags:
+        - receipt
+      summary: Presigned URL 발급
+      description: |
+        S3에 영수증 이미지를 직접 업로드하기 위한 Presigned URL을 발급한다.
+        발급된 URL은 **5분** 동안 유효하다.
+
+        클라이언트는 응답으로 받은 `upload_url`에 이미지 파일을 HTTP `PUT`으로 업로드해야 한다.
+        업로드 시 요청 헤더에 `Content-Type`을 반드시 포함해야 하며, 발급 시 지정한 `content_type`과 일치해야 한다.
+      operationId: getUploadUrl
+      security:
+        - UserIdHeader: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadUrlRequest'
+            example:
+              content_type: image/jpeg
+      responses:
+        '200':
+          description: Presigned URL 발급 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadUrlResponse'
+              example:
+                upload_url: "https://my-bucket.s3.ap-northeast-2.amazonaws.com/receipts/abc123.jpg?X-Amz-Signature=..."
+                key: "receipts/abc123-uuid.jpg"
+                content_type: "image/jpeg"
+        '400':
+          description: 지원하지 않는 content_type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnsupportedContentTypeError'
+              example:
+                error: "Unsupported content_type"
+                allowed:
+                  - image/jpeg
+                  - image/png
+                  - image/webp
+                  - image/heic
+        '401':
+          description: x-user-id 헤더 누락
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                message: "Unauthorized"
+        '429':
+          description: 호출 한도 초과 (IP 5회/분 또는 사용자 10회/분)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                message: "Too Many Requests"
+
+  /receipt/analyze:
+    post:
+      tags:
+        - receipt
+      summary: 영수증 분석
+      description: |
+        S3에 업로드된 영수증 이미지를 AWS Bedrock(Amazon Nova Lite v2)으로 분석하여
+        구조화된 JSON 데이터를 반환한다.
+
+        `key`는 `POST /receipt/upload-url` 응답에서 수신한 값을 그대로 사용한다.
+      operationId: analyzeReceipt
+      security:
+        - UserIdHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeRequest'
+            example:
+              key: "receipts/abc123-uuid.jpg"
+      responses:
+        '200':
+          description: 영수증 분석 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptData'
+              example:
+                date: "2024-03-15"
+                store: "GS25 강남점"
+                items:
+                  - name: "신라면"
+                    quantity: 2
+                    price: 1200
+                  - name: "삼각김밥 참치마요"
+                    quantity: 1
+                    price: 1500
+                total: 3900
+                currency: "KRW"
+        '400':
+          description: 요청 본문에 key 누락
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "key is required"
+        '401':
+          description: x-user-id 헤더 누락
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                message: "Unauthorized"
+        '429':
+          description: 호출 한도 초과 (IP 5회/분 또는 사용자 10회/분)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                message: "Too Many Requests"
+
+components:
+  securitySchemes:
+    UserIdHeader:
+      type: apiKey
+      in: header
+      name: x-user-id
+      description: |
+        사용자 고유 식별값. 모든 요청에 필수로 포함해야 한다.
+        Lambda Authorizer가 이 헤더를 기반으로 사용자별 호출 횟수를 제한한다.
+        헤더가 없으면 `401 Unauthorized`가 반환된다.
+
+  schemas:
+    UploadUrlRequest:
+      type: object
+      properties:
+        content_type:
+          type: string
+          description: 업로드할 이미지의 MIME 타입. 생략 시 `image/jpeg`로 처리된다.
+          default: image/jpeg
+          enum:
+            - image/jpeg
+            - image/png
+            - image/webp
+            - image/heic
+
+    UploadUrlResponse:
+      type: object
+      required:
+        - upload_url
+        - key
+        - content_type
+      properties:
+        upload_url:
+          type: string
+          format: uri
+          description: |
+            S3 Presigned URL. 이 URL에 HTTP `PUT`으로 이미지를 직접 업로드한다.
+            유효 시간: 5분.
+        key:
+          type: string
+          description: S3 객체 키. 이후 `/receipt/analyze` 호출 시 사용한다.
+          example: "receipts/550e8400-e29b-41d4-a716-446655440000.jpg"
+        content_type:
+          type: string
+          description: Presigned URL에 바인딩된 Content-Type. PUT 업로드 시 동일 값을 사용해야 한다.
+          example: "image/jpeg"
+
+    AnalyzeRequest:
+      type: object
+      required:
+        - key
+      properties:
+        key:
+          type: string
+          description: "`POST /receipt/upload-url` 응답에서 수신한 S3 객체 키"
+          example: "receipts/550e8400-e29b-41d4-a716-446655440000.jpg"
+
+    ReceiptData:
+      type: object
+      description: Bedrock이 영수증 이미지에서 추출한 구조화된 데이터
+      properties:
+        date:
+          type: string
+          format: date
+          description: 영수증 날짜 (YYYY-MM-DD)
+          example: "2024-03-15"
+        store:
+          type: string
+          description: 가게명
+          example: "GS25 강남점"
+        items:
+          type: array
+          description: 구매 항목 목록
+          items:
+            $ref: '#/components/schemas/ReceiptItem'
+        total:
+          type: number
+          description: 합계 금액
+          example: 3900
+        currency:
+          type: string
+          description: 통화 코드 (ISO 4217)
+          example: "KRW"
+
+    ReceiptItem:
+      type: object
+      properties:
+        name:
+          type: string
+          description: 상품명
+          example: "신라면"
+        quantity:
+          type: integer
+          description: 수량
+          example: 2
+        price:
+          type: number
+          description: 단가
+          example: 1200
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: 오류 메시지
+        message:
+          type: string
+          description: API Gateway 레벨 오류 메시지
+
+    UnsupportedContentTypeError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Unsupported content_type"
+        allowed:
+          type: array
+          description: 허용된 content_type 목록
+          items:
+            type: string
+          example:
+            - image/jpeg
+            - image/png
+            - image/webp
+            - image/heic
