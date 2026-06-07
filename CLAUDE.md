@@ -41,17 +41,64 @@ fuel-log-receipt-sam/
 
 ## API 설계 (목표)
 
+**공통: 사용자 식별 및 호출 제한 방식 (모든 API 공통 적용)**
+
+두 API 모두 동일한 Lambda Authorizer + DynamoDB 방식으로 호출 제한을 적용한다.
+
+- 사용자는 모든 요청 헤더에 `x-user-id`(고유 식별값)를 포함하여 전송
+- API Gateway가 메인 Lambda를 실행하기 전에 **Lambda Authorizer**를 먼저 호출
+- Lambda Authorizer가 DynamoDB에서 해당 사용자의 최근 호출 횟수를 확인 후 카운트 +1
+  - 제한 이내: `Allow` 정책 반환 → 메인 Lambda 실행
+  - 제한 초과: `Deny` 정책 반환 → API Gateway가 `429 Too Many Requests` 응답
+- 메인 Lambda는 인증 통과 후에만 실행되므로 비용 절감 효과
+
+**DynamoDB 테이블 설계:**
+- Partition Key: `user_id` (사용자 고유 식별값)
+- 속성: `request_count` (호출 횟수), `window_start` (시간 윈도우 시작 시각)
+- TTL: 윈도우 만료 시 자동 삭제 (예: 1분 윈도우)
+
+---
+
 ### 1. Presigned URL 발급
+
 ```
 POST /receipt/upload-url
-Response: { "upload_url": "<presigned_url>", "key": "<s3_key>" }
+Headers:
+  x-user-id: <사용자 고유 식별값>
+Response:
+  200: { "upload_url": "<presigned_url>", "key": "<s3_key>" }
+  429: Too Many Requests (호출 한도 초과)
+```
+
+**흐름:**
+```
+클라이언트 (x-user-id 헤더 포함)
+  → API Gateway
+  → Lambda Authorizer (DynamoDB 호출 횟수 확인 + 카운트 +1)
+      ├── 제한 초과 → 429 Too Many Requests
+      └── 허용 → 메인 Lambda (Presigned URL 생성 후 반환)
+                  → S3 (클라이언트가 직접 이미지 업로드)
 ```
 
 ### 2. 영수증 분석
+
 ```
 POST /receipt/analyze
+Headers:
+  x-user-id: <사용자 고유 식별값>
 Body: { "key": "<s3_key>" }
-Response: { "items": [...], "total": ..., "date": ..., ... }
+Response:
+  200: { "items": [...], "total": ..., "date": ..., ... }
+  429: Too Many Requests (호출 한도 초과)
+```
+
+**흐름:**
+```
+클라이언트 (x-user-id 헤더 포함)
+  → API Gateway
+  → Lambda Authorizer (DynamoDB 호출 횟수 확인 + 카운트 +1)
+      ├── 제한 초과 → 429 Too Many Requests
+      └── 허용 → 메인 Lambda (S3 이미지 읽기 → Bedrock 분석 → JSON 반환)
 ```
 
 ## 개발 명령어
@@ -73,5 +120,6 @@ uv run pytest tests/unit/
 ## 주요 설계 결정
 
 - 이미지 업로드는 클라이언트가 S3에 직접 업로드(Presigned URL)하여 Lambda를 통한 대용량 파일 전송 부하를 줄임
+- 사용자 식별 및 호출 제한은 Lambda Authorizer + DynamoDB 조합으로 처리 — 메인 Lambda(Bedrock 호출) 실행 전에 차단하여 비용 절감
 - Bedrock 호출 시 S3 이미지를 직접 참조하거나 바이트로 읽어 전달
 - 영수증 파싱 결과는 구조화된 JSON 스키마로 고정 반환
