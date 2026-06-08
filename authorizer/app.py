@@ -7,7 +7,7 @@ dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["RATE_LIMIT_TABLE"])
 
 USER_MAX_REQUESTS = 10
-IP_MAX_REQUESTS = 5
+IP_MAX_REQUESTS = 10
 WINDOW_SECONDS = 60
 
 
