@@ -114,17 +114,61 @@ Response:
 ## 개발 명령어
 
 ```bash
-# 빌드 (Lambda 런타임이 python3.12이므로 uv로 설치한 3.12 경로를 PATH에 추가)
-PATH="/Users/ricepotato/.local/share/uv/python/cpython-3.12.10-macos-aarch64-none/bin:$PATH" sam build
+# 빌드 + 배포 (권장)
+make deploy
+
+# 빌드만
+make build
 
 # 로컬 API 실행
 sam local start-api
 
-# 배포
-sam deploy
-
-# 테스트
+# 단위 테스트
 uv run pytest tests/unit/
+```
+
+## API 수동 테스트 방법
+
+배포된 API URL: `https://91p5i7lvpj.execute-api.ap-northeast-2.amazonaws.com/Prod`
+
+### 영수증 이미지 분석 (3단계)
+
+```bash
+API_URL="https://91p5i7lvpj.execute-api.ap-northeast-2.amazonaws.com/Prod"
+USER_ID="test-user-001"
+IMAGE_PATH="/path/to/receipt.jpg"   # 테스트할 이미지 경로
+
+# 1단계: Presigned URL 발급
+UPLOAD_RESP=$(curl -s -X POST "$API_URL/receipt/upload-url" \
+  -H "Content-Type: application/json" \
+  -H "x-user-id: $USER_ID" \
+  -d '{"content_type": "image/jpeg"}')
+
+UPLOAD_URL=$(echo "$UPLOAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['upload_url'])")
+KEY=$(echo "$UPLOAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])")
+
+# 2단계: S3에 이미지 직접 업로드
+curl -s -o /dev/null -w "Upload: %{http_code}\n" -X PUT "$UPLOAD_URL" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary "@$IMAGE_PATH"
+
+# 3단계: 영수증 분석
+curl -s -X POST "$API_URL/receipt/analyze" \
+  -H "Content-Type: application/json" \
+  -H "x-user-id: $USER_ID" \
+  -d "{\"key\": \"$KEY\"}" | python3 -m json.tool
+```
+
+### 예상 응답 형식
+
+```json
+{
+    "date": "YYYY-MM-DD",
+    "location": "주유소명",
+    "liters": 56.825,
+    "pricePerLiter": 1795,
+    "totalPrice": 102000
+}
 ```
 
 ## 주요 설계 결정
