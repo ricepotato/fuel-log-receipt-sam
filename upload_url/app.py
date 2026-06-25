@@ -1,14 +1,17 @@
 import json
 import os
 import uuid
+from urllib.parse import urlparse, urlunparse
 
 import boto3
 
 _region = os.environ.get("AWS_REGION", "ap-northeast-2")
-s3 = boto3.client("s3", region_name=_region,
-                  endpoint_url=f"https://s3.{_region}.amazonaws.com")
+s3 = boto3.client(
+    "s3", region_name=_region, endpoint_url=f"https://s3.{_region}.amazonaws.com"
+)
 BUCKET = os.environ["RECEIPT_BUCKET"]
 EXPIRES_IN = 300  # 5분
+CLOUDFRONT_DOMAIN = os.environ.get("CLOUDFRONT_DOMAIN")
 
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg": "jpg",
@@ -26,10 +29,12 @@ def lambda_handler(event, context):
     if content_type not in ALLOWED_CONTENT_TYPES:
         return {
             "statusCode": 400,
-            "body": json.dumps({
-                "error": "Unsupported content_type",
-                "allowed": list(ALLOWED_CONTENT_TYPES.keys()),
-            }),
+            "body": json.dumps(
+                {
+                    "error": "Unsupported content_type",
+                    "allowed": list(ALLOWED_CONTENT_TYPES.keys()),
+                }
+            ),
         }
 
     ext = ALLOWED_CONTENT_TYPES[content_type]
@@ -39,7 +44,12 @@ def lambda_handler(event, context):
         Params={"Bucket": BUCKET, "Key": key, "ContentType": content_type},
         ExpiresIn=EXPIRES_IN,
     )
+    if CLOUDFRONT_DOMAIN:
+        parsed = urlparse(upload_url)
+        upload_url = urlunparse(parsed._replace(netloc=CLOUDFRONT_DOMAIN))
     return {
         "statusCode": 200,
-        "body": json.dumps({"upload_url": upload_url, "key": key, "content_type": content_type}),
+        "body": json.dumps(
+            {"upload_url": upload_url, "key": key, "content_type": content_type}
+        ),
     }

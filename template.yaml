@@ -5,6 +5,12 @@ Description: >
 
   Receipt image analysis service using AWS Bedrock
 
+Parameters:
+  CloudFrontDomain:
+    Type: String
+    Default: "d1ec5umvf9gnq4.cloudfront.net"
+    Description: CloudFront domain name for presigned URL host replacement (e.g. d1234abcd.cloudfront.net). Leave empty to use S3 direct URL.
+
 Globals:
   Function:
     Timeout: 30
@@ -83,6 +89,7 @@ Resources:
       Environment:
         Variables:
           RECEIPT_BUCKET: !Ref ReceiptBucket
+          CLOUDFRONT_DOMAIN: !Ref CloudFrontDomain
       Events:
         UploadUrl:
           Type: Api
