@@ -84,8 +84,13 @@ def analyze_image(image_bytes: bytes, media_type: str) -> dict:
 def lambda_handler(event, context):
     body = json.loads(event.get("body") or "{}")
     key = body.get("key")
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type, x-user-id",
+    }
+
     if not key:
-        return {"statusCode": 400, "body": json.dumps({"error": "key is required"})}
+        return {"statusCode": 400, "headers": cors_headers, "body": json.dumps({"error": "key is required"})}
 
     ext = key.rsplit(".", 1)[-1].lower() if "." in key else "jpg"
     media_type = EXT_TO_MEDIA_TYPE.get(ext, "image/jpeg")
@@ -94,4 +99,4 @@ def lambda_handler(event, context):
     image_bytes = s3.get_object(Bucket=BUCKET, Key=f"{BUCKET}/{key}")["Body"].read()
     receipt_data = analyze_image(image_bytes, media_type)
 
-    return {"statusCode": 200, "body": json.dumps(receipt_data, ensure_ascii=False)}
+    return {"statusCode": 200, "headers": cors_headers, "body": json.dumps(receipt_data, ensure_ascii=False)}
