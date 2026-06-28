@@ -4,11 +4,9 @@ import uuid
 from urllib.parse import urlparse, urlunparse
 
 import boto3
+from botocore.client import Config
 
 _region = os.environ.get("AWS_REGION", "ap-northeast-2")
-s3 = boto3.client(
-    "s3", region_name=_region, endpoint_url=f"https://s3.{_region}.amazonaws.com"
-)
 BUCKET = os.environ["RECEIPT_BUCKET"]
 EXPIRES_IN = 300  # 5분
 CLOUDFRONT_DOMAIN = os.environ.get("CLOUDFRONT_DOMAIN")
@@ -20,6 +18,14 @@ ALLOWED_CONTENT_TYPES = {
     "image/heic": "heic",
 }
 DEFAULT_CONTENT_TYPE = "image/jpeg"
+
+config = Config(s3={"addressing_style": "path"})
+s3 = boto3.client(
+    "s3",
+    region_name=_region,
+    endpoint_url=f"https://{CLOUDFRONT_DOMAIN}",
+    config=config,
+)
 
 
 def lambda_handler(event, context):

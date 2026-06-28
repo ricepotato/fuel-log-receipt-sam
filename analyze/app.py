@@ -46,26 +46,28 @@ def analyze_image(image_bytes: bytes, media_type: str) -> dict:
 
     response = bedrock.invoke_model(
         modelId=MODEL_ID,
-        body=json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 1024,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": image_data,
+        body=json.dumps(
+            {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 1024,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": image_data,
+                                },
                             },
-                        },
-                        {"type": "text", "text": PROMPT},
-                    ],
-                }
-            ],
-        }),
+                            {"type": "text", "text": PROMPT},
+                        ],
+                    }
+                ],
+            }
+        ),
     )
 
     result_text = json.loads(response["body"].read())["content"][0]["text"]
@@ -88,7 +90,8 @@ def lambda_handler(event, context):
     ext = key.rsplit(".", 1)[-1].lower() if "." in key else "jpg"
     media_type = EXT_TO_MEDIA_TYPE.get(ext, "image/jpeg")
 
-    image_bytes = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+    # cloudfront 를 통해 접근할 경우 path-style addressing를 사용해야 하므로, s3.get_object 호출 시 Bucket 이름을 포함한 Key를 사용한다.
+    image_bytes = s3.get_object(Bucket=BUCKET, Key=f"{BUCKET}/{key}")["Body"].read()
     receipt_data = analyze_image(image_bytes, media_type)
 
     return {"statusCode": 200, "body": json.dumps(receipt_data, ensure_ascii=False)}
